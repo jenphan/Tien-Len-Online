@@ -7,12 +7,56 @@
 </head>
 <body>
     <h1>Tien Len Online</h1>
-    <p>Server connected.</p>
+    
+    <input id="name" placeholder="Your Name"/>
+    <br><br>
 
+    <button onclick="createLobby()">Create Lobby</button>
+    <br><br>
+
+    <input id="code" placeholder="Lobby Code" />
+    <button onclick="joinLobby()">Join Lobby</button>
+
+    <h2 id="lobbyTitle"></h2>
+    <ul id="players"></ul>
+    
     <script src ="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
-        console.log("Connected to server");
+        
+        function createLobby() {
+            const name = document.getElementById("name").value;
+            socket.emit("createLobby", name);
+        }
+
+        function joinLobby() {
+            const name = document.getElementById("name").value;
+            const code = document.getElementById("code").value.toUpperCase();
+            socket.emit("joinLobby", { code, playerName: name });
+        }
+
+        socket.on("lobbyCreated", ({code, players}) => {
+            document.getElementById("lobbyTitle").innerText = "Lobby Code: " + code;
+            updatePlayers(players);
+        });
+
+        socket.on("lobbyUpdated", ({players}) => {
+            updatePlayers(players);
+        });
+
+        socket.on("errorMessage", msg => {
+            alert(msg);
+        });
+
+        function updatePlayers(players) {
+            const list = document.getElementById("players");
+            list.innerHTML = "";
+            players.forEach(p => {
+                const li = document.createElement("li");
+                li.innerText = p.name;
+                list.appendChild(li);
+            });
+        }
     </script>
 </body>
 </html>
