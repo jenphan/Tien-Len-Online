@@ -19,6 +19,11 @@ function generateLobbyCode() {
     return code;
 } 
 
+function getHostId(lobby) {
+    const host = lobby.players.find(p => p.isHost);
+    return host ? host.id : null;
+}
+
 const suitOrder = {"♠": 0, "♣": 1, "♦": 2, "♥": 3};
 const rankOrder = {"3": 0, "4": 1, "5": 2, "6": 3, "7": 4, "8": 5, "9": 6, "10": 7, "J": 8, "Q": 9, "K": 10, "A": 11, "2": 12}
 
@@ -77,6 +82,7 @@ app.use(express.static("public"));
 io.on("connection", (socket) => {
     console.log("Player connected: ", socket.id);
 
+    // == CREATE LOBBY ==
     socket.on("createLobby", ({playerName, lobbyName}) => {
         if (!playerName || playerName.trim() === "") {
             socket.emit("errorMessage", "Name is required");
@@ -96,17 +102,12 @@ io.on("connection", (socket) => {
 
         lobbies[code] = {
             name: lobbyName || "Unnamed Lobby",
-            players: [],
+            players: [{ id: socket.id, name: playerName, isHost: true }],
             gameStarted: false,
             turnIndex: 0,
             pile: [],
             deck: []
         };
-
-        lobbies[code].players.push({
-            id: socket.id,
-            name: playerName
-        });
 
         socketLobbyMap[socket.id] = code;
         socket.join(code);
@@ -114,12 +115,15 @@ io.on("connection", (socket) => {
         socket.emit("lobbyCreated", {
             code,
             lobbyName: lobbies[code].name,
-            players: lobbies[code].players
+            players: lobbies[code].players,
+            hostId: getHostId(lobbies[code]),
+            playerSocketId: socket.id
         });
 
         console.log(`Lobby ${code} created by ${playerName}`);
     })
 
+    // == JOIN LOBBY ==
     socket.on("joinLobby", ({code, playerName}) => {
         if (!playerName || playerName.trim() === "") {
             socket.emit("errorMessage", "Name is required");
@@ -148,16 +152,12 @@ io.on("connection", (socket) => {
             return;
         }
 
-        const nameTaken = lobby.players.some(p => p.name === playerName);
-        if (nameTaken) {
-            socket.emit("errorMessage", "Name already taken in this lobby");
-            return;
+        const existingPlayer = lobby.players.find(p => p.name === playerName);
+        if (existingPlayer) {
+            existingPlayer.id = socket.id;
+        } else {
+            lobby.players.push({ id: socket.id, name: playerName, isHost: false});
         }
-
-        lobby.players.push({
-            id: socket.id,
-            name: playerName
-        });
 
         socketLobbyMap[socket.id] = code;
         socket.join(code);
@@ -165,12 +165,43 @@ io.on("connection", (socket) => {
         io.to(code).emit("lobbyUpdated", {
             code,
             lobbyName: lobby.name,
-            players: lobby.players
+            players: lobby.players,
+            hostId: getHostId(lobby),
         });
 
         console.log(`${playerName} joined lobby ${code}`);
     });
 
+    // == LEAVE LOBBY ==
+    socket.on("leaveLobby", (code) => {
+        const lobby = lobbies[code];
+        if (!lobby) return;
+
+        const playerIndex = lobby.players.findIndex(p => p.id === socket.id);
+        if (playerIndex !== -1) {
+            const leavingPlayer = lobby.players[playerIndex];
+            lobby.players.splice(playerIndex, 1);
+            delete socketLobbyMap[socket.id];
+
+            if (leavingPlayer.isHost && lobby.players.length > 0) {
+                lobby.players[0].isHost = true;
+            }
+        }
+
+        if (lobby.players.length > 0) {
+            io.to(code).emit("lobbyUpdated", {
+                code,
+                lobbyName: lobby.name,
+                players: lobby.players,
+                hostId: getHostId(lobby)
+            });
+        } else {
+            delete lobbies[code];
+            console.log(`Lobby ${code} deleted`);
+        }
+    });
+
+    // == DISCONNECT ==
     socket.on("disconnect", () => {
         console.log("Disconnected: ", socket.id);
         const code = socketLobbyMap[socket.id];
@@ -179,18 +210,27 @@ io.on("connection", (socket) => {
         const lobby = lobbies[code];
         if (!lobby) return;
 
-        lobby.players = lobby.players.filter(p => p.id !== socket.id);
-        delete socketLobbyMap[socket.id];
+        const playerIndex = lobby.players.findIndex(p => p.id === socket.id);
+        if (playerIndex !== -1) {
+            const leavingPlayer = lobby.players[playerIndex];
+            lobby.players.splice(playerIndex, 1);
+            delete socketLobbyMap[socket.id];
 
-        if (lobby.players.length === 0) {
-            delete lobbies[code];
-            console.log(`Lobby ${code} deleted`);
-        } else {
+            if (leavingPlayer.isHost && lobby.players.length > 0) {
+                lobby.players[0].isHost = true;
+            }
+        }
+
+        if (lobby.players.length > 0) {
             io.to(code).emit("lobbyUpdated", {
                 code,
                 lobbyName: lobby.name,
-                players: lobby.players
+                players: lobby.players,
+                hostId: getHostId(lobby)
             });
+        } else {
+            delete lobbies[code];
+            console.log(`Lobby ${code} deleted`);
         }
     });
 
@@ -198,6 +238,12 @@ io.on("connection", (socket) => {
         const lobby = lobbies[code];
         if (!lobby) {
             socket.emit("errorMessage", "Lobby not found");
+            return;
+        }
+
+        const host = lobby.players.find(p => p.isHost);
+        if (!host || socket.id !== host.id) {
+            socket.emit("errorMessage", "Only the host can start the game");
             return;
         }
 
@@ -225,6 +271,26 @@ io.on("connection", (socket) => {
 
         io.to(code).emit("gameMessage", "Game Started! " + lobby.players[lobby.turnIndex].name + " begins with 3♠");
     });
+
+    socket.on("assignHost", ({code, newHostId}) => {
+        const lobby = lobbies[code];
+        if (!lobby) return;
+
+        const host = lobby.players.find(p => p.isHost);
+        if (!host || socket.id !== host.id) {
+            socket.emit("errorMessage", "Only the host can assign a new host");
+            return;
+        }
+
+        lobby.players.forEach(p => p.isHost = (p.id === newHostId));
+        
+        io.to(code).emit("lobbyUpdated", {
+            code,
+            lobbyName: lobby.name,
+            players: lobby.players,
+            hostId: newHostId
+        })
+    })
 });
 
 server.listen(PORT, () => {

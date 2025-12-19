@@ -13,7 +13,13 @@
         <button onclick="setName()">Continue</button>
     </div>
 
-    <div id="lobbySection" style="display:none">
+    <div id="createJoinSection" style="display:none">
+        <div>
+            Your name: <span id="displayName"></span>
+            <input id="changeName" placeholder="Change Name"/>
+            <button onClick="changeName()">Update</button>
+        </div>
+
         <h2>Create Lobby</h2>
         <input id="lobbyName" placeholder="Lobby name" />
         <button onclick="createLobby()">Create</button>
@@ -21,11 +27,14 @@
         <h2>Join Lobby</h2>
         <input id="codeInput" placeholder="Lobby code" />
         <button onclick="joinLobby()">Join</button>
+    </div>
 
+    <div id="lobbySection" style="display:none">
         <h2 id="lobbyTitle"></h2>
         <ul id="players"></ul>
+        <button onclick="leaveLobby()">Leave Lobby</button>
 
-        <button onclick="startGame()">Start Game</button>
+        <button id="startGameBtn" onclick="startGame()">Start Game</button>
         <div id="hand"></div>
     </div>
     
@@ -33,45 +42,91 @@
     <script>
         const socket = io();
         let playerName = "";
+        let playerId = "";
+        let currentLobbyCode = null;
+        let gameStarted = false;
 
         function setName() {
             const input = document.getElementById("nameInput").value.trim();
-            if (!input) {
-                alert("Name required");
-                return;
-            }
+            if (!input) return alert("Name required");
 
             playerName = input;
-            document.getElementById("nameSection").style.display = "none";
-            document.getElementById("lobbySection").style.display = "block";
+            document.getElementById("displayName").innerText = playerName;
+            showSection("createJoinSection");
+        }
+
+        function changeName() {
+            const newName = document.getElementById("changeName").value.trim();
+            if (!newName) return;
+            playerName = newName;
+            document.getElementById("displayName").innerText = playerName;
         }
         
         function createLobby() {
             const lobbyName = document.getElementById("lobbyName").value;
             socket.emit("createLobby", {playerName, lobbyName});
+            showSection("lobbySection");
         }
 
         function joinLobby() {
             const code = document.getElementById("codeInput").value.toUpperCase();
+            currentLobbyCode = code;
             socket.emit("joinLobby", { code, playerName });
+            showSection("lobbySection");
+        }
+
+        function leaveLobby() {
+            if (!currentLobbyCode) return;
+            socket.emit("leaveLobby", currentLobbyCode);
+            
+            currentLobbyCode = null;
+            gameStarted = null;
+            document.getElementById("lobbyTitle").innerText = "";
+            document.getElementById("players").innerHTML = "";
+            document.getElementById("hand").innerHTML = "";
+            document.getElementById("startGameBtn").style.display = "none";
+
+            showSection("createJoinSection");
         }
 
         function startGame() {
-            socket.emit("startGame", document.getElementById("codeInput").value.toUpperCase());
+            if (!currentLobbyCode) return;
+            socket.emit("startGame", currentLobbyCode);
+            document.getElementById("startGameBtn").style.display = "none";
         }
 
-        socket.on("lobbyCreated", ({code, lobbyName, players}) => {
+        function updateLobbyUI(players, hostId, lobbyName, code) {
             document.getElementById("lobbyTitle").innerText = `${lobbyName} (Code: ${code})`;
-            updatePlayers(players);
+            
+            if (playerId === hostId) {
+                renderHostControls(players, hostId);
+            } else {
+                updatePlayers(players, hostId);
+            }
+
+            document.getElementById("startGameBtn").style.display = (playerId === hostId && !gameStarted) ? "inline-block" : "none";
+        }
+
+        socket.on("lobbyCreated", (data) => {
+            currentLobbyCode = data.code;
+            playerId = data.playerSocketId;
+            renderPlayers(data.players, data.hostId);
+            document.getElementById("lobbyTitle").innerText = `${data.lobbyName} (Code: ${data.code})`;
+            document.getElementById("startGameBtn").style.display = (playerId === data.hostId && !gameStarted) ? "inline-block" : "none";
+
+            showSection("lobbySection");
         });
 
-        socket.on("lobbyUpdated", ({lobbyName, players}) => {
-            document.getElementById("lobbyTitle").innerText = lobbyName;
-            updatePlayers(players);
+        socket.on("lobbyUpdated", (data) => {
+            renderPlayers(data.players, data.hostId);
+            document.getElementById("lobbyTitle").innerText = `${data.lobbyName} (Code: ${data.code})`;
+            document.getElementById("startGameBtn").style.display = (playerId === data.hostId && !gameStarted) ? "inline-block" : "none";
         });
 
         socket.on("gameStarted", ({hand, turnIndex, players}) => {
-            document.getElementById("hand").innerHTML = "<h3>Your Hand: </h3>" + hand.map(c => c.rank + c.suit).join (", ");
+            gameStarted = true;
+            document.getElementById("hand").innerHTML = "<h3>Your Hand: </h3>" + hand.map(c => c.rank + c.suit).join(", ");
+            document.getElementById("startGameBtn").style.display = "none";
             alert(players[turnIndex].name + " starts the game!");
         })
 
@@ -79,14 +134,33 @@
             alert(msg);
         });
 
-        function updatePlayers(players) {
+        function renderPlayers(players, hostId) {
             const list = document.getElementById("players");
             list.innerHTML = "";
+
             players.forEach(p => {
                 const li = document.createElement("li");
-                li.innerText = p.name;
+                li.innerText = p.name + (p.id === hostId ? " (Host)" : "");
+                
+                if (playerId === hostId && p.id !== hostId) {
+                    const btn = document.createElement("button");
+                    btn.innerText = "Make Host";
+                    btn.onclick = () => {
+                        socket.emit("assignHost", { code: currentLobbyCode, newHostId: p.id });
+                    };
+                    li.appendChild(document.createTextNode(" "));
+                    li.appendChild(btn);
+                }
                 list.appendChild(li);
             });
+        }
+
+        function showSection(sectionId) {
+            document.getElementById("nameSection").style.display = "none";
+            document.getElementById("createJoinSection").style.display = "none";
+            document.getElementById("lobbySection").style.display = "none";
+
+            document.getElementById(sectionId).style.display = "block";
         }
     </script>
 </body>
