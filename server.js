@@ -8,6 +8,7 @@ const io = new Server(server);
 
 // (eventually) stores all active lobbies
 const lobbies = {};
+const socketLobbyMap = {};
 
 function generateLobbyCode() {
     const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -25,11 +26,17 @@ app.use(express.static("public"));
 io.on("connection", (socket) => {
     console.log("Player connected: ", socket.id);
 
-    socket.on("disconnect", () => {
-        console.log("Player disconnected", socket.id);
-    });
+    socket.on("createLobby", ({playerName, lobbyName}) => {
+        if (!playerName || playerName.trim() === "") {
+            socket.emit("errorMessage", "Name is required");
+            return;
+        }
 
-    socket.on("createLobby", (playerName) => {
+        if (socketLobbyMap[socket.id]) {
+            socket.emit("errorMessage", "You are already in a lobby");
+            return;
+        }
+
         let code;
 
         do {
@@ -37,6 +44,7 @@ io.on("connection", (socket) => {
         } while (lobbies[code]);
 
         lobbies[code] = {
+            name: lobbyName || "Unnamed Lobby",
             players: [],
             gameStarted: false
         };
@@ -46,10 +54,12 @@ io.on("connection", (socket) => {
             name: playerName
         });
 
+        socketLobbyMap[socket.id] = code;
         socket.join(code);
 
         socket.emit("lobbyCreated", {
             code,
+            lobbyName: lobbies[code].name,
             players: lobbies[code].players
         });
 
@@ -57,6 +67,16 @@ io.on("connection", (socket) => {
     })
 
     socket.on("joinLobby", ({code, playerName}) => {
+        if (!playerName || playerName.trim() === "") {
+            socket.emit("errorMessage", "Name is required");
+            return;
+        }
+
+        if (socketLobbyMap[socket.id]) {
+            socket.emit("errorMessage", "You are already in a lobby");
+            return;
+        }
+
         const lobby = lobbies[code];
 
         if (!lobby) {
@@ -74,15 +94,23 @@ io.on("connection", (socket) => {
             return;
         }
 
+        const nameTaken = lobby.players.some(p => p.name === playerName);
+        if (nameTaken) {
+            socket.emit("errorMessage", "Name already taken in this lobby");
+            return;
+        }
+
         lobby.players.push({
             id: socket.id,
             name: playerName
         });
 
+        socketLobbyMap[socket.id] = code;
         socket.join(code);
 
         io.to(code).emit("lobbyUpdated", {
             code,
+            lobbyName: lobby.name,
             players: lobby.players
         });
 
@@ -91,25 +119,24 @@ io.on("connection", (socket) => {
 
     socket.on("disconnect", () => {
         console.log("Disconnected: ", socket.id);
+        const code = socketLobbyMap[socket.id];
+        if (!code) return;
 
-        for (const code in lobbies) {
-            const lobby = lobbies[code];
-            const index = lobby.players.findIndex(p => p.id === socket.id);
+        const lobby = lobbies[code];
+        if (!lobby) return;
 
-            if (index !== -1) {
-                lobby.players.splice(index, 1);
+        lobby.players = lobby.players.filter(p => p.id !== socket.id);
+        delete socketLobbyMap[socket.id];
 
-                if (lobby.players.length === 0) {
-                    delete lobbies[code];
-                    console.log(`Lobby ${code} deleted`);
-                } else {
-                    io.to(code).emit("LobbyUpdated", {
-                        code,
-                        players: lobby.players
-                    });
-                }
-                break;
-            }
+        if (lobby.players.length === 0) {
+            delete lobbies[code];
+            console.log(`Lobby ${code} deleted`);
+        } else {
+            io.to(code).emit("lobbyUpdated", {
+                code,
+                lobbyName: lobby.name,
+                players: lobby.players
+            });
         }
     });
 });

@@ -7,15 +7,21 @@
 </head>
 <body>
     <h1>Tien Len Online</h1>
-    
-    <input id="name" placeholder="Your Name"/>
-    <br><br>
 
-    <button onclick="createLobby()">Create Lobby</button>
-    <br><br>
+    <div id="nameSection">
+        <input id="nameInput" placeholder="Your Name"/>
+        <button onclick="setName()">Continue</button>
+    </div>
 
-    <input id="code" placeholder="Lobby Code" />
-    <button onclick="joinLobby()">Join Lobby</button>
+    <div id="lobbySection" style="display:none">
+        <h2>Create Lobby</h2>
+        <input id="lobbyName" placeholder="Lobby name" />
+        <button onclick="createLobby()">Create</button>
+
+        <h2>Join Lobby</h2>
+        <input id="codeInput" placeholder="Lobby code" />
+        <button onclick="joinLobby()">Join</button>
+    </div>
 
     <h2 id="lobbyTitle"></h2>
     <ul id="players"></ul>
@@ -23,24 +29,37 @@
     <script src ="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
+        let playerName = "";
+
+        function setName() {
+            const input = document.getElementById("nameInput").value.trim();
+            if (!input) {
+                alert("Name required");
+                return;
+            }
+
+            playerName = input;
+            document.getElementById("nameSection").style.display = "none";
+            document.getElementById("lobbySection").style.display = "block";
+        }
         
         function createLobby() {
-            const name = document.getElementById("name").value;
-            socket.emit("createLobby", name);
+            const lobbyName = document.getElementById("lobbyName").value;
+            socket.emit("createLobby", {playerName, lobbyName});
         }
 
         function joinLobby() {
-            const name = document.getElementById("name").value;
-            const code = document.getElementById("code").value.toUpperCase();
-            socket.emit("joinLobby", { code, playerName: name });
+            const code = document.getElementById("codeInput").value.toUpperCase();
+            socket.emit("joinLobby", { code, playerName });
         }
 
-        socket.on("lobbyCreated", ({code, players}) => {
-            document.getElementById("lobbyTitle").innerText = "Lobby Code: " + code;
+        socket.on("lobbyCreated", ({code, lobbyName, players}) => {
+            document.getElementById("lobbyTitle").innerText = `${lobbyName} (Code: ${code})`;
             updatePlayers(players);
         });
 
-        socket.on("lobbyUpdated", ({players}) => {
+        socket.on("lobbyUpdated", ({lobbyName, players}) => {
+            document.getElementById("lobbyTitle").innerText = lobbyName;
             updatePlayers(players);
         });
 
