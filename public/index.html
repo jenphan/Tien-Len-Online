@@ -21,10 +21,13 @@
         <h2>Join Lobby</h2>
         <input id="codeInput" placeholder="Lobby code" />
         <button onclick="joinLobby()">Join</button>
-    </div>
 
-    <h2 id="lobbyTitle"></h2>
-    <ul id="players"></ul>
+        <h2 id="lobbyTitle"></h2>
+        <ul id="players"></ul>
+
+        <button onclick="startGame()">Start Game</button>
+        <div id="hand"></div>
+    </div>
     
     <script src ="/socket.io/socket.io.js"></script>
     <script>
@@ -53,6 +56,10 @@
             socket.emit("joinLobby", { code, playerName });
         }
 
+        function startGame() {
+            socket.emit("startGame", document.getElementById("codeInput").value.toUpperCase());
+        }
+
         socket.on("lobbyCreated", ({code, lobbyName, players}) => {
             document.getElementById("lobbyTitle").innerText = `${lobbyName} (Code: ${code})`;
             updatePlayers(players);
@@ -62,6 +69,11 @@
             document.getElementById("lobbyTitle").innerText = lobbyName;
             updatePlayers(players);
         });
+
+        socket.on("gameStarted", ({hand, turnIndex, players}) => {
+            document.getElementById("hand").innerHTML = "<h3>Your Hand: </h3>" + hand.map(c => c.rank + c.suit).join (", ");
+            alert(players[turnIndex].name + " starts the game!");
+        })
 
         socket.on("errorMessage", msg => {
             alert(msg);
