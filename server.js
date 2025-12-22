@@ -135,7 +135,8 @@ io.on("connection", (socket) => {
             return;
         }
 
-        const lobby = lobbies[code];
+        const lobby = lobbies[code.toUpperCase()];
+        code = code.toUpperCase();
 
         if (!lobby) {
             socket.emit("errorMessage", "Lobby not found");
@@ -152,12 +153,11 @@ io.on("connection", (socket) => {
             return;
         }
 
-        const existingPlayer = lobby.players.find(p => p.name === playerName);
-        if (existingPlayer) {
-            existingPlayer.id = socket.id;
-        } else {
-            lobby.players.push({ id: socket.id, name: playerName, isHost: false});
-        }
+        lobby.players.push({
+            id: socket.id,
+            name: playerName,
+            isHost: false
+        })
 
         socketLobbyMap[socket.id] = code;
         socket.join(code);
@@ -172,66 +172,47 @@ io.on("connection", (socket) => {
         console.log(`${playerName} joined lobby ${code}`);
     });
 
-    // == LEAVE LOBBY ==
-    socket.on("leaveLobby", (code) => {
-        const lobby = lobbies[code];
-        if (!lobby) return;
-
-        const playerIndex = lobby.players.findIndex(p => p.id === socket.id);
-        if (playerIndex !== -1) {
-            const leavingPlayer = lobby.players[playerIndex];
-            lobby.players.splice(playerIndex, 1);
-            delete socketLobbyMap[socket.id];
-
-            if (leavingPlayer.isHost && lobby.players.length > 0) {
-                lobby.players[0].isHost = true;
-            }
-        }
-
-        if (lobby.players.length > 0) {
-            io.to(code).emit("lobbyUpdated", {
-                code,
-                lobbyName: lobby.name,
-                players: lobby.players,
-                hostId: getHostId(lobby)
-            });
-        } else {
-            delete lobbies[code];
-            console.log(`Lobby ${code} deleted`);
-        }
-    });
-
-    // == DISCONNECT ==
-    socket.on("disconnect", () => {
-        console.log("Disconnected: ", socket.id);
-        const code = socketLobbyMap[socket.id];
+    function removePlayerFromLobby(socketId) {
+        const code = socketLobbyMap[socketId];
         if (!code) return;
 
         const lobby = lobbies[code];
         if (!lobby) return;
 
-        const playerIndex = lobby.players.findIndex(p => p.id === socket.id);
-        if (playerIndex !== -1) {
-            const leavingPlayer = lobby.players[playerIndex];
-            lobby.players.splice(playerIndex, 1);
-            delete socketLobbyMap[socket.id];
+        const index = lobby.players.findIndex(p => p.id === socketId);
+        if (index === -1) return;
 
-            if (leavingPlayer.isHost && lobby.players.length > 0) {
-                lobby.players[0].isHost = true;
-            }
+        const leavingPlayer = lobby.players[index];
+        lobby.players.splice(index, 1);
+        delete socketLobbyMap[socketId];
+
+        if (leavingPlayer.isHost && lobby.players.length > 0) {
+            lobby.players[0].isHost = true;
         }
 
-        if (lobby.players.length > 0) {
-            io.to(code).emit("lobbyUpdated", {
-                code,
-                lobbyName: lobby.name,
-                players: lobby.players,
-                hostId: getHostId(lobby)
-            });
-        } else {
+        if (lobby.players.length === 0) {
             delete lobbies[code];
             console.log(`Lobby ${code} deleted`);
+            return;
         }
+
+        io.to(code).emit("lobbyUpdated", {
+            code,
+            lobbyName: lobby.name,
+            players: lobby.players,
+            hostId: getHostId(lobby)
+        });
+    }
+
+    // == LEAVE LOBBY ==
+    socket.on("leaveLobby", (code) => {
+        removePlayerFromLobby(socket.id);
+    });
+
+    // == DISCONNECT ==
+    socket.on("disconnect", () => {
+        console.log("Disconnected: ", socket.id);
+        removePlayerFromLobby(socket.id);
     });
 
     socket.on("startGame", (code) => {

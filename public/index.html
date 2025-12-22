@@ -65,14 +65,12 @@
         function createLobby() {
             const lobbyName = document.getElementById("lobbyName").value;
             socket.emit("createLobby", {playerName, lobbyName});
-            showSection("lobbySection");
         }
 
         function joinLobby() {
             const code = document.getElementById("codeInput").value.toUpperCase();
             currentLobbyCode = code;
             socket.emit("joinLobby", { code, playerName });
-            showSection("lobbySection");
         }
 
         function leaveLobby() {
@@ -80,7 +78,9 @@
             socket.emit("leaveLobby", currentLobbyCode);
             
             currentLobbyCode = null;
-            gameStarted = null;
+            playerId = "";
+            gameStarted = false;
+            
             document.getElementById("lobbyTitle").innerText = "";
             document.getElementById("players").innerHTML = "";
             document.getElementById("hand").innerHTML = "";
@@ -96,14 +96,8 @@
         }
 
         function updateLobbyUI(players, hostId, lobbyName, code) {
+            renderPlayers(players, hostId);
             document.getElementById("lobbyTitle").innerText = `${lobbyName} (Code: ${code})`;
-            
-            if (playerId === hostId) {
-                renderHostControls(players, hostId);
-            } else {
-                updatePlayers(players, hostId);
-            }
-
             document.getElementById("startGameBtn").style.display = (playerId === hostId && !gameStarted) ? "inline-block" : "none";
         }
 
@@ -118,9 +112,17 @@
         });
 
         socket.on("lobbyUpdated", (data) => {
-            renderPlayers(data.players, data.hostId);
-            document.getElementById("lobbyTitle").innerText = `${data.lobbyName} (Code: ${data.code})`;
-            document.getElementById("startGameBtn").style.display = (playerId === data.hostId && !gameStarted) ? "inline-block" : "none";
+            if (!currentLobbyCode || data.code !== currentLobbyCode) {
+                return;
+            }
+
+            if (!playerId) {
+                const me = data.players.find(p => p.name === playerName);
+                if (me) playerId = me.id;
+            }
+
+            updateLobbyUI(data.players, data.hostId, data.lobbyName, data.code);
+            showSection("lobbySection");
         });
 
         socket.on("gameStarted", ({hand, turnIndex, players}) => {
